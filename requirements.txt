@@ -1,0 +1,9 @@
+# Python 3.12+
+mcp>=2.3,<3            # MCP client (2.x API)
+pyyaml                 # hub.yaml
+aiohttp                # web chat front end
+python-dotenv
+openai
+httpx
+# Pin to your cluster's major version: 9.x client for ES 9, "elasticsearch[async]>=8,<9" for ES 8
+elasticsearch[async]>=9,<10

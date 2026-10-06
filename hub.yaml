@@ -1,0 +1,27 @@
+# Every MCP server listed here is connected at startup and ALL its tools are given to the AI.
+# Secrets go in .env; reference them here as ${VAR}. Restart the hub after editing.
+# A server that fails to connect is logged and skipped; the rest still load.
+#
+# Three ways to add a server (uncomment and edit):
+mcp_servers:
+
+  # 1. Remote server over Streamable HTTP (default transport)
+  # myserver:
+  #   url: https://mcp.example.internal/mcp
+  #   headers:
+  #     Authorization: Bearer ${MYSERVER_TOKEN}
+  #   ca_bundle: /path/to/internal-ca.pem      # optional
+
+  # 2. Older remote server that only speaks SSE
+  # legacy:
+  #   transport: sse
+  #   url: https://legacy-mcp.example.internal/sse
+  #   headers:
+  #     Authorization: Bearer ${LEGACY_TOKEN}
+
+  # 3. Local server started as a subprocess (stdio)
+  # localtool:
+  #   command: python3
+  #   args: ["/opt/mcp/my_server.py"]
+  #   env:
+  #     API_TOKEN: ${LOCALTOOL_TOKEN}
