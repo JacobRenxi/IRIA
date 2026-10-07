@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Skills · {{ hub_name }}{% endblock %}
+{% block main %}
+<div class="page">
+  <header class="page-head with-action">
+    <div>
+      <h1>Skills</h1>
+      <p class="muted">
+        Step-by-step procedures {{ hub_name }} follows for tasks it has done before. It writes new skills
+        after working something out, and loads one whenever a task matches. You can write your own too.
+      </p>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('skill_new') }}">New skill</a>
+  </header>
+
+  {% if skills %}
+  <ul class="skill-list">
+    {% for s in skills %}
+    <li class="card">
+      <a href="{{ url_for('skill_edit', name=s.name) }}"><strong>{{ s.name }}</strong></a>
+      <p class="muted">{{ s.description or "No description" }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="card empty-card">
+    <strong>No skills yet.</strong>
+    <p class="muted">
+      Ask {{ hub_name }} to do a multi-step task, then say <em>“save that as a skill”</em>, or click
+      <em>New skill</em> and write the steps yourself. Skills are stored as
+      <code>data/skills/&lt;name&gt;/SKILL.md</code>.
+    </p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

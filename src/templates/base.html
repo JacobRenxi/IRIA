@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>{% block title %}{{ hub_name }}{% endblock %}</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>{{ hub_name }}</span>
+    </div>
+    <a class="btn btn-primary new-chat" href="{{ url_for('index') }}">New chat</a>
+
+    <label class="sr-only" for="chat-search">Search chats</label>
+    <input id="chat-search" class="search" type="search" placeholder="Search chats" autocomplete="off">
+    <ul class="chat-list" id="chat-list">
+      {% for c in chats %}
+      <li data-id="{{ c.id }}" class="{{ 'active' if current and current.id == c.id }}">
+        <a href="{{ url_for('chat', sid=c.id) }}">{{ c.title }}</a>
+        <button class="chat-delete" type="button" title="Delete chat" aria-label="Delete chat">&times;</button>
+      </li>
+      {% else %}
+      <li class="chat-list-empty">No chats yet</li>
+      {% endfor %}
+    </ul>
+
+    <nav class="nav" aria-label="Hub">
+      <a href="{{ url_for('index') }}" class="{{ 'active' if nav == 'chat' }}">Chat</a>
+      <a href="{{ url_for('memory_page') }}" class="{{ 'active' if nav == 'memory' }}">Memory</a>
+      <a href="{{ url_for('skills_page') }}" class="{{ 'active' if nav == 'skills' }}">Skills</a>
+      <a href="{{ url_for('tools_page') }}" class="{{ 'active' if nav == 'tools' }}">Tools &amp; status</a>
+    </nav>
+    <div class="sidebar-foot">
+      <a class="model-pill {{ 'bad' if model.error and not model.ok else ('warn' if model.error else 'good') }}"
+         href="{{ url_for('tools_page') }}" title="{{ model.error or 'Model is ready' }}">
+        <span class="dot"></span>{{ model.model or 'model' }}
+        <span class="pill-note">{{ 'tools on' if model.ok and model.tools else ('chat only' if model.ok else 'not ready') }}</span>
+      </a>
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="link-btn" type="submit">Log out</button>
+      </form>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main">
+    <button class="menu-btn" id="menu-btn" type="button" aria-controls="sidebar" aria-label="Open menu">
+      <span></span><span></span><span></span>
+    </button>
+    {% if model.error %}
+    <div class="banner {{ 'banner-error' if not model.ok else 'banner-warn' }}">
+      {{ model.error | ticks }} <a href="{{ url_for('tools_page') }}">Details</a>
+    </div>
+    {% endif %}
+    {% with flashes = get_flashed_messages(with_categories=true) %}
+      {% for category, text in flashes %}
+      <div class="banner {{ 'banner-error' if category == 'error' else 'banner-ok' }}">{{ text }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block main %}{% endblock %}
+  </main>
+</div>
+<script src="{{ url_for('static', filename='base.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

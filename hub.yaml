@@ -1,5 +1,6 @@
 # Every MCP server listed here is connected at startup and ALL its tools are given to the AI.
-# Secrets go in .env; reference them here as ${VAR}. Restart the hub after editing.
+# Secrets go in .env; reference them here as ${VAR}. After editing, click "Reload MCP servers"
+# on the Tools page (or restart the hub).
 # A server that fails to connect is logged and skipped; the rest still load.
 #
 # Three ways to add a server (uncomment and edit):

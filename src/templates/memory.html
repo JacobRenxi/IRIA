@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Memory · {{ hub_name }}{% endblock %}
+{% block main %}
+<div class="page">
+  <header class="page-head">
+    <h1>Memory</h1>
+    <p class="muted">
+      These notes go into every conversation, so {{ hub_name }} remembers between chats.
+      It edits <em>Memory</em> and <em>About you</em> itself as it learns; you can fix or remove anything here.
+    </p>
+  </header>
+
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% set blurbs = {
+      "soul": "Who the assistant is: its name, tone and standing instructions. Only you edit this.",
+      "memory": "Facts it learned about your systems and environment.",
+      "user": "Facts it learned about you: preferences, role, how you like answers.",
+    } %}
+    {% set titles = {"soul": "Personality", "memory": "Memory", "user": "About you"} %}
+    {% for key in ["soul", "memory", "user"] %}
+    <section class="card">
+      <div class="card-head">
+        <label for="{{ key }}"><strong>{{ titles[key] }}</strong> <code class="muted">{{ names[key] }}</code></label>
+        <span class="counter muted" data-for="{{ key }}" data-limit="{{ limits[key] }}"></span>
+      </div>
+      <p class="muted small">{{ blurbs[key] }}</p>
+      <textarea id="{{ key }}" name="{{ key }}" rows="{{ 6 if key == 'soul' else 8 }}" class="mono"
+                placeholder="{{ '- one note per line' if key != 'soul' }}">{{ files[key] }}</textarea>
+    </section>
+    {% endfor %}
+    <div><button class="btn btn-primary" type="submit">Save memory</button></div>
+  </form>
+</div>
+{% endblock %}

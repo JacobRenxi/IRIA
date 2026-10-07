@@ -1,10 +1,13 @@
 # Secrets: real tokens and passwords live here; .env.example is the committed template
 .env
 
+# Chats, memory, skills and the login cookie key (personal; back this folder up instead)
+data/
+
 # Python
 .venv/
 __pycache__/
 *.pyc
 
-# Original download of this project (same files as src/)
+# Original download of this project
 ai-hub.zip

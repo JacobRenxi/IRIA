@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Tools · {{ hub_name }}{% endblock %}
+{% block main %}
+<div class="page">
+  <header class="page-head with-action">
+    <div>
+      <h1>Tools &amp; status</h1>
+      <p class="muted">Choose what {{ hub_name }} may use. Switches are saved at once and apply from the next message.</p>
+    </div>
+    <form method="post" action="{{ url_for('tools_reload') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn" type="submit" title="Re-read hub.yaml and .env, and reconnect every MCP server">Reload MCP servers</button>
+    </form>
+  </header>
+
+  <section class="card">
+    <div class="card-head">
+      <strong>Model</strong>
+      <span class="state {{ 'good' if model.ok and model.tools else ('warn' if model.ok else 'bad') }}">
+        {{ 'ready, can use tools' if model.ok and model.tools else ('chat only' if model.ok else 'not ready') }}
+      </span>
+    </div>
+    <dl class="facts">
+      <dt>LLM_MODEL</dt><dd><code>{{ model.model }}</code></dd>
+      <dt>LLM_BASE_URL</dt><dd><code>{{ model.base_url }}</code></dd>
+    </dl>
+    {% if model.error %}<p class="note">{{ model.error | ticks }}</p>{% endif %}
+    {% if model.installed %}
+    <p class="muted small">Installed models: {% for m in model.installed %}<code>{{ m }}</code>{{ ", " if not loop.last }}{% endfor %}</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <strong>Toolsets</strong>
+      <span class="muted small"><span id="tools-on">{{ tools_on }}</span> of {{ tools_total }} tools switched on</span>
+    </div>
+    {% if model.ok and not model.tools %}
+    <p class="note">The current model can't call tools, so none are used until you change <code>LLM_MODEL</code>. Your switches are kept.</p>
+    {% endif %}
+    {% if config_error %}<p class="note bad-text">{{ config_error }}</p>{% endif %}
+
+    <ul class="toolsets">
+      {% for ts in toolsets %}
+      <li class="toolset{{ ' is-off' if not ts.on }}" data-id="{{ ts.id }}">
+        <div class="toolset-head">
+          <label class="switch">
+            <input type="checkbox" class="toolset-switch" {{ 'checked' if ts.on }} aria-label="Allow {{ ts.label }}">
+            <span class="track"></span>
+          </label>
+          <div class="toolset-name">
+            <strong>{{ ts.label }}</strong><span class="badge">{{ ts.kind }}</span>
+            {% if ts.status %}
+              <span class="state {{ {'connected': 'good', 'failed': 'bad'}.get(ts.status.state, 'warn') }}">{{ ts.status.state }}</span>
+            {% elif ts.id == 'elastic' %}
+              <span class="state {{ 'good' if elastic.ok else 'bad' }}">{{ 'connected' if elastic.ok else 'error' }}</span>
+            {% endif %}
+            {% if ts.about %}<div class="muted small">{{ ts.about }}</div>{% endif %}
+            {% if ts.status and ts.status.error %}<div class="small bad-text">{{ ts.status.error }}</div>{% endif %}
+            {% if ts.id == 'elastic' and elastic.detail %}
+              <div class="small {{ 'muted' if elastic.ok else 'bad-text' }}">{{ elastic.detail }}</div>
+            {% endif %}
+          </div>
+          {% if ts.tools %}<span class="muted small count"><span class="n-on">{{ ts.tools_on }}</span>/{{ ts.tools | length }}</span>{% endif %}
+        </div>
+        {% if ts.tools %}
+        <details>
+          <summary>{{ ts.tools | length }} tool{{ 's' if ts.tools | length != 1 }}: switch single tools on or off</summary>
+          <ul class="tool-list">
+            {% for t in ts.tools %}
+            <li>
+              <label class="tool-row">
+                <input type="checkbox" class="tool-switch" data-name="{{ t.name }}" {{ 'checked' if t.on }} {{ 'disabled' if not ts.on }}>
+                <span><code>{{ t.name }}</code> <span class="muted">{{ t.description | truncate(200) }}</span></span>
+              </label>
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><strong>Add a system</strong></div>
+    <p class="muted small">
+      MCP servers come from <code>{{ hub_config }}</code>. Put the server's token in <code>.env</code>, add the
+      server to <code>hub.yaml</code> referencing the token as <code>${NAME}</code>, then click <em>Reload MCP servers</em>.
+      New servers start switched on.
+    </p>
+    {% if not elastic.enabled %}
+    <p class="muted small">Elasticsearch is not configured: set <code>ELASTIC_URL</code> and <code>ELASTIC_API_KEY</code> in <code>.env</code> and restart to add the read-only Elastic tools.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='tools.js') }}"></script>{% endblock %}

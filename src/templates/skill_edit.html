@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ 'New skill' if is_new else skill.name }} · {{ hub_name }}{% endblock %}
+{% block main %}
+<div class="page">
+  <header class="page-head">
+    <p><a href="{{ url_for('skills_page') }}">&larr; Skills</a></p>
+    <h1>{{ 'New skill' if is_new else skill.name }}</h1>
+  </header>
+
+  <form method="post" action="{{ url_for('skill_save') }}" class="stack card">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="original" value="{{ original if original is defined else ('' if is_new else skill.name) }}">
+    <label for="name"><strong>Name</strong> <span class="muted small">lowercase-with-dashes</span></label>
+    <input id="name" name="name" value="{{ skill.name }}" required pattern="[a-z0-9][a-z0-9\-]{0,63}"
+           placeholder="triage-failed-logins" autocomplete="off">
+    <label for="description"><strong>When to use it</strong> <span class="muted small">one line; this is what the model sees in every prompt</span></label>
+    <input id="description" name="description" value="{{ skill.description }}" required
+           placeholder="Investigate a spike of failed logins for a host or user">
+    <label for="body"><strong>Instructions</strong> <span class="muted small">Markdown: steps, exact tools and queries, pitfalls</span></label>
+    <textarea id="body" name="body" rows="18" class="mono" required
+              placeholder="1. Call get_fields on logs-* to confirm the field names.&#10;2. Run ES|QL: FROM logs-* | WHERE event.outcome == &quot;failure&quot; | STATS c = COUNT(*) BY host.name | SORT c DESC | LIMIT 20&#10;3. ...">{{ skill.body }}</textarea>
+    <div class="row">
+      <button class="btn btn-primary" type="submit">Save skill</button>
+    </div>
+  </form>
+
+  {% if not is_new %}
+  <form method="post" action="{{ url_for('skill_delete', name=skill.name) }}" class="danger-zone"
+        data-confirm="Delete the skill {{ skill.name }}? This can't be undone.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-danger" type="submit">Delete skill</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

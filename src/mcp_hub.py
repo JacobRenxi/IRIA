@@ -1,5 +1,5 @@
 """Connects every MCP server listed in hub.yaml and exposes all their tools to the agent.
-Tokens live in .env; hub.yaml references them as ${VAR}. Restart the hub to reload."""
+Tokens live in .env; hub.yaml references them as ${VAR}. Reload from the Tools page after editing."""
 import asyncio
 import json
 import logging
@@ -10,18 +10,19 @@ from contextlib import AsyncExitStack
 
 import httpx2
 import yaml
+from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, PaginatedRequestParams
 
-log = logging.getLogger("mcp-hub")
+from config import HUB_CONFIG as CONFIG_PATH
+from config import MAX_RESULT_CHARS, ROOT
+from config import MCP_CONNECT_TIMEOUT as CONNECT_TIMEOUT
+from config import MCP_TOOL_TIMEOUT as TOOL_TIMEOUT
 
-CONFIG_PATH = os.getenv("HUB_CONFIG", "hub.yaml")
-TOOL_TIMEOUT = float(os.getenv("MCP_TOOL_TIMEOUT", "120"))
-CONNECT_TIMEOUT = float(os.getenv("MCP_CONNECT_TIMEOUT", "30"))
-MAX_RESULT_CHARS = 12000
+log = logging.getLogger("mcp-hub")
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -64,15 +65,24 @@ def _http_client_factory(ca_bundle: str | None):
     return factory
 
 
+def _transport(cfg: dict) -> str:
+    return "stdio" if "command" in cfg else cfg.get("transport", "http")
+
+
 class MCPHub:
     def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._reset()
+
+    def _reset(self) -> None:
         self.schemas: list[dict] = []                 # OpenAI tool schemas for every MCP tool
+        self.status: dict[str, dict] = {}             # per server, for the Tools page
+        self.config_error = ""                        # hub.yaml problem, for the Tools page
         self._routes: dict[str, tuple[ClientSession, str]] = {}
         self._by_server: dict[str, list[str]] = {}
         self._stop = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
         self._started = False
-        self._lock = asyncio.Lock()
 
     async def ensure_started(self) -> None:
         """Connect every server once. Each server lives in its own task, so one bad server
@@ -83,10 +93,30 @@ class MCPHub:
             self._started = True
             ready = []
             for name, cfg in self._load_config().items():
+                cfg = cfg or {}
+                if not isinstance(cfg, dict):
+                    self.status[name] = {"state": "failed", "transport": "?", "tools": 0,
+                                         "error": "hub.yaml entry must be a mapping (url: ... or command: ...)"}
+                    continue
+                self.status[name] = {"state": "connecting", "transport": _transport(cfg), "tools": 0, "error": ""}
                 ev = asyncio.Event()
                 self._tasks.append(asyncio.create_task(self._run_server(name, cfg, ev), name=f"mcp-{name}"))
                 ready.append(ev)
             await asyncio.gather(*(ev.wait() for ev in ready))
+
+    async def stop(self) -> None:
+        """Close every server (stdio subprocesses exit too)."""
+        self._stop.set()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+
+    async def reload(self) -> None:
+        """Re-read hub.yaml and .env-referenced tokens, and reconnect every server."""
+        async with self._lock:
+            await self.stop()
+            self._reset()
+            load_dotenv(ROOT / ".env", override=True)  # pick up tokens added since startup
+        await self.ensure_started()
 
     async def _run_server(self, name: str, cfg: dict, ready: asyncio.Event) -> None:
         try:
@@ -95,6 +125,7 @@ class MCPHub:
                     session = await self._connect(stack, _expand(cfg or {}))
                     count = await self._register(name, session)
                 log.info("MCP %s: connected, %d tools", name, count)
+                self.status[name].update(state="connected", tools=count)
                 ready.set()
                 await self._stop.wait()
         except BaseException as exc:  # transport failures can surface as cancellation
@@ -104,8 +135,16 @@ class MCPHub:
                 if reason == "CancelledError" and not ready.is_set():
                     reason = f"timed out after {CONNECT_TIMEOUT:.0f}s"
                 log.error("MCP %s: NOT connected or disconnected: %s", name, reason)
+                self.status[name].update(state="failed", tools=0, error=reason)
         finally:
             ready.set()
+
+    def server_of(self, tool: str) -> str | None:
+        """Which server a tool name belongs to (names are sanitized, so don't split them)."""
+        for server, names in list(self._by_server.items()):
+            if tool in names:
+                return server
+        return None
 
     def _unregister(self, server: str) -> None:
         for name in self._by_server.pop(server, []):
@@ -113,11 +152,19 @@ class MCPHub:
         self.schemas = [s for s in self.schemas if s["function"]["name"] in self._routes]
 
     def _load_config(self) -> dict:
-        if not os.path.exists(CONFIG_PATH):
+        if not CONFIG_PATH.exists():
             log.warning("%s not found, no MCP servers loaded", CONFIG_PATH)
             return {}
-        with open(CONFIG_PATH) as f:
-            return (yaml.safe_load(f) or {}).get("mcp_servers") or {}
+        try:
+            with open(CONFIG_PATH) as f:
+                servers = (yaml.safe_load(f) or {}).get("mcp_servers") or {}
+            if not isinstance(servers, dict):
+                raise ValueError("mcp_servers must be a mapping of server names")
+        except (yaml.YAMLError, ValueError, AttributeError) as exc:
+            self.config_error = f"{CONFIG_PATH.name}: {exc}"
+            log.error("Can't read %s", self.config_error)
+            return {}
+        return servers
 
     async def _connect(self, stack: AsyncExitStack, cfg: dict) -> ClientSession:
         if "command" in cfg:  # local server launched as a subprocess

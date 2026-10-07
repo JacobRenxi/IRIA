@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ current.title ~ ' · ' if current }}{{ hub_name }}{% endblock %}
+{% block main %}
+<div class="chat">
+  <section class="log" id="log" aria-live="polite">
+    {% if not current %}
+    <div class="empty" id="empty">
+      <h1>What can I do for you?</h1>
+      <p>
+        I answer from your connected systems ({{ tool_count }} tools right now), remember what matters
+        between chats, and save skills for tasks I've worked out how to do.
+      </p>
+      <div class="suggestions">
+        <button type="button" class="suggestion">What tools do you have, and what can you do with them?</button>
+        <button type="button" class="suggestion">Remember that I prefer short, direct answers.</button>
+        <button type="button" class="suggestion">What do you remember about me?</button>
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
+  <form class="composer" id="composer">
+    <label class="sr-only" for="input">Message</label>
+    <textarea id="input" rows="1" placeholder="Ask {{ hub_name }} anything…" title="Enter to send, Shift+Enter for a new line" autofocus></textarea>
+    <button type="submit" class="btn btn-primary" id="send">Send</button>
+  </form>
+</div>
+<script type="application/json" id="chat-data">{{ {"session": current.id if current else None, "messages": messages, "running": running} | tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='chat.js') }}"></script>{% endblock %}

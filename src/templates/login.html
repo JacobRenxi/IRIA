@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in · {{ hub_name }}</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-body">
+  <form class="login" method="post" action="{{ url_for('login') }}">
+    <div class="brand brand-large">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>{{ hub_name }}</span>
+    </div>
+    <p class="muted">Your AI hub. Log in to continue.</p>
+    {% with flashes = get_flashed_messages(with_categories=true) %}
+      {% for category, text in flashes %}<div class="banner banner-error">{{ text }}</div>{% endfor %}
+    {% endwith %}
+    {% if error %}<div class="banner banner-error" role="alert">{{ error }}</div>{% endif %}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" required autofocus>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button class="btn btn-primary" type="submit">Log in</button>
+  </form>
+</body>
+</html>

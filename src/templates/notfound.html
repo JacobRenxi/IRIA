@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Not found · {{ hub_name }}{% endblock %}
+{% block main %}
+<div class="page">
+  <h1>Not found</h1>
+  <p class="muted">That page or chat doesn't exist (it may have been deleted).</p>
+  <p><a class="btn" href="{{ url_for('index') }}">Start a new chat</a></p>
+</div>
+{% endblock %}
