@@ -29,6 +29,16 @@ CREATE TABLE IF NOT EXISTS messages (
     model TEXT                   -- "<connection>/<model>" that wrote this answer
 );
 CREATE INDEX IF NOT EXISTS messages_by_session ON messages(session_id, id);
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,          -- file name, or page title
+    source TEXT,                 -- the page's address, for web pages
+    bytes INTEGER NOT NULL,
+    chars INTEGER NOT NULL,      -- length of the text the AI gets
+    created REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attachments_by_session ON attachments(session_id, created);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, content='messages', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
     INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
@@ -131,6 +141,35 @@ def add_message(sid: str, role: str, content: str, tools: list | None = None, mo
             (sid, role, content, json.dumps(tools) if tools else None, now, model),
         )
         con.execute("UPDATE sessions SET updated = ? WHERE id = ?", (now, sid))
+
+
+def title_from_first_message(sid: str, message: str) -> None:
+    """A chat started by attaching a file is named after it until the first question arrives."""
+    title = " ".join(message.split())
+    title = title[:60] + ("…" if len(title) > 60 else "")
+    with _db() as con:
+        if con.execute("SELECT 1 FROM messages WHERE session_id = ? LIMIT 1", (sid,)).fetchone() is None:
+            con.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, sid))
+
+
+def add_attachment(aid: str, sid: str, name: str, source: str | None, size: int, chars: int) -> dict:
+    row = {"id": aid, "session_id": sid, "name": name, "source": source, "bytes": size, "chars": chars,
+           "created": time.time()}
+    with _db() as con:
+        con.execute("INSERT INTO attachments VALUES (:id, :session_id, :name, :source, :bytes, :chars, :created)", row)
+        con.execute("UPDATE sessions SET updated = ? WHERE id = ?", (row["created"], sid))
+    return row
+
+
+def attachments(sid: str) -> list[dict]:
+    with _db() as con:
+        rows = con.execute("SELECT * FROM attachments WHERE session_id = ? ORDER BY created", (sid,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def remove_attachment(sid: str, aid: str) -> bool:
+    with _db() as con:
+        return con.execute("DELETE FROM attachments WHERE session_id = ? AND id = ?", (sid, aid)).rowcount > 0
 
 
 def set_model(sid: str, spec: str) -> None:

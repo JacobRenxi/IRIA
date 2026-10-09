@@ -1,15 +1,19 @@
 """Every tool the model can call, grouped into toolsets you switch on and off on the Tools page:
-built-in (memory, skills, past chats) + Elasticsearch (if configured) + one toolset per MCP server.
+built-in (memory, skills, past chats, attached files, web pages) + Elasticsearch (if configured)
++ one toolset per MCP server.
 
 Switches live in data/tools.json. Only what's switched off is stored, so new MCP servers and
 new tools start switched on."""
+import asyncio
 import json
 import threading
 
+import attachments
 import elastic_tools
 import memory
 import sessions
 import skills
+import web
 from config import DATA_DIR, MAX_RESULT_CHARS
 from mcp_hub import hub
 
@@ -41,7 +45,12 @@ BUILTIN_TOOLSETS = {
     "memory": ("Memory", "Lets the AI save and edit notes in MEMORY.md and USER.md.", [memory.SCHEMA]),
     "skills": ("Skills", "Lets the AI load skills, and write new ones.", skills.SCHEMAS),
     "past_chats": ("Past chats", "Lets the AI search your earlier conversations.", [SESSION_SEARCH]),
+    "files": ("Files", "Lets the AI read and search the whole of long files and pages attached to a chat.",
+              attachments.SCHEMAS),
+    "web": ("Web", "Lets the AI open more pages on websites you shared in a chat.", [web.SCHEMA]),
 }
+# Tools that work on the current chat's attachments: called with the chat's id first.
+CHAT_TOOLS = {"file_read": attachments.file_read, "file_search": attachments.file_search, "web_fetch": web.web_fetch}
 ELASTIC_NAMES = {s["function"]["name"] for s in elastic_tools.TOOL_SCHEMAS}
 
 
@@ -154,16 +163,20 @@ def catalog() -> list[dict]:
     return groups
 
 
-async def call(name: str, args: dict) -> str:
+async def call(name: str, args: dict, sid: str = "") -> str:
     if not is_on(name):
         return f"Tool error: {name} is switched off. The user can switch it on in Tools & status."
     try:
-        if name in BUILTIN:
+        if name in CHAT_TOOLS:
+            result = CHAT_TOOLS[name](sid, **args)
+            if asyncio.iscoroutine(result):
+                result = await result
+        elif name in BUILTIN:
             result = BUILTIN[name](**args)
         elif name in ELASTIC_NAMES:
             result = await elastic_tools.call_tool(name, args)
         else:
             result = await hub.call(name, args)
-    except TypeError as exc:  # wrong or missing arguments: tell the model so it can retry
+    except (TypeError, ValueError) as exc:  # wrong or missing arguments: tell the model so it can retry
         return f"Tool error: bad arguments for {name}: {exc}"
     return result if len(result) <= MAX_RESULT_CHARS else result[:MAX_RESULT_CHARS] + " ...[truncated]"

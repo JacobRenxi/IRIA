@@ -44,6 +44,14 @@ MCP_CONNECT_TIMEOUT = float(os.getenv("MCP_CONNECT_TIMEOUT", "30"))
 
 MAX_RESULT_CHARS = int(os.getenv("TOOL_RESULT_MAX_CHARS", "12000"))  # per tool result, keeps context small
 
+# --- Files and web pages attached to a chat ---
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
+# Characters of attached text put in front of the AI with every message (all attachments together).
+# Bigger files are cut there and the AI reads the rest with tools. Lower it for small local models.
+ATTACH_CONTEXT_CHARS = int(os.getenv("ATTACH_CONTEXT_CHARS", "30000"))
+# Links to addresses on your own network (localhost, 10.x, 192.168.x, ...) are not fetched unless this is 1.
+WEB_ALLOW_PRIVATE = os.getenv("WEB_ALLOW_PRIVATE", "0") == "1"
+
 
 def check() -> None:
     """Stop at startup with a clear message instead of failing later."""

@@ -6,3 +6,4 @@ httpx
 elasticsearch
 pyyaml
 python-dotenv
+pypdf

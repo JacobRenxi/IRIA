@@ -14,6 +14,7 @@ from datetime import datetime
 
 import openai
 
+import attachments
 import elastic_tools
 import memory
 import providers
@@ -21,6 +22,7 @@ import runtime
 import sessions
 import skills
 import tools
+import web
 from config import AGENT_MAX_STEPS, MAX_HISTORY
 from mcp_hub import hub
 
@@ -44,6 +46,9 @@ TOOL_RULES = [
      "  with skill_manage (or fix a skill that turned out wrong), and tell the user."),
     (lambda names: "session_search" in names,
      "- Past conversations: use session_search when the user refers to something discussed before."),
+    (lambda names: "web_fetch" in names,
+     "- Web: web_fetch opens more pages on the websites the user shared in this chat (use the links listed\n"
+     "  in a page). Use it when the answer is likely on another page of that site."),
 ]
 NO_TOOLS = {
     "model": "Your tools are off because the current model can't call them.",
@@ -53,7 +58,7 @@ NO_TOOLS_REST = ("Answer from your own knowledge, and say clearly when a questio
                  "from the user's systems.")
 STYLE = "Reply in Markdown: the direct answer first, then key details, then which tools or queries you used."
 
-def system_prompt(tool_list: list[dict], model_can_call_tools: bool) -> str:
+def system_prompt(tool_list: list[dict], model_can_call_tools: bool, sid: str = "") -> str:
     names = {t["function"]["name"] for t in tool_list}
     parts = [memory.read("soul")]
     if names:
@@ -73,7 +78,9 @@ def system_prompt(tool_list: list[dict], model_can_call_tools: bool) -> str:
     if "skill_view" in names:
         parts.append("## Skills (load with skill_view before using)\n" + (skills.prompt_index() or "(none yet)"))
     parts.append(f"Current date and time: {datetime.now().astimezone():%A %Y-%m-%d %H:%M %Z}")
-    return "\n\n".join(parts)
+    if sid:  # files and pages attached to this chat go last: they can be long
+        parts.append(attachments.context(sid, can_read_more="file_read" in names))
+    return "\n\n".join(p for p in parts if p)
 
 
 async def _stream(p: providers.Provider, model: str, messages: list[dict],
@@ -113,9 +120,13 @@ def _parse_args(raw: str) -> dict | None:
 
 
 async def run_agent(question: str, history: list[dict], p: providers.Provider, model: str,
-                    use_tools: bool = True) -> AsyncIterator[tuple[str, dict]]:
+                    use_tools: bool = True, sid: str = "") -> AsyncIterator[tuple[str, dict]]:
     tool_list = tools.schemas() if use_tools else []  # only the tools switched on
-    messages = [{"role": "system", "content": system_prompt(tool_list, use_tools)}, *history,
+    # Attachment tools only matter when this chat has attachments (or shared web pages).
+    has_files, sites = bool(sid and sessions.attachments(sid)), web.shared_sites(sid) if sid else set()
+    tool_list = [t for t in tool_list if (has_files or tools.toolset_of(t["function"]["name"]) != "files")
+                 and (sites or t["function"]["name"] != "web_fetch")]
+    messages = [{"role": "system", "content": system_prompt(tool_list, use_tools, sid)}, *history,
                 {"role": "user", "content": question}]
 
     for _ in range(AGENT_MAX_STEPS):
@@ -141,7 +152,7 @@ async def run_agent(question: str, history: list[dict], p: providers.Provider, m
             if args is None:
                 result = f"Tool error: arguments must be a JSON object, got: {c['arguments'][:200]}"
             else:
-                result = await tools.call(c["name"], args)
+                result = await tools.call(c["name"], args, sid)
             ok = not result.startswith(("Tool error", "Unknown tool", "Rejected"))
             yield "tool_result", {"id": ui_id, "ok": ok, "preview": result[:800]}
             messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
@@ -224,6 +235,17 @@ class _Unanswerable(Exception):
 
 async def _execute(run: ChatRun, message: str, spec: str) -> None:
     trail, answer, error, p = [], None, None, None
+
+    def emit(event: str, data: dict) -> None:
+        """Send progress to the browser, and keep tool steps for the saved chat."""
+        if event == "tool":
+            trail.append({**data, "ok": None, "preview": ""})
+        elif event == "tool_result":
+            for t in trail:
+                if t["id"] == data["id"]:
+                    t.update(ok=data["ok"], preview=data["preview"][:300])
+        run.emit(event, data)
+
     try:
         history = sessions.history(run.sid, MAX_HISTORY)
         sessions.add_message(run.sid, "user", message)
@@ -236,20 +258,15 @@ async def _execute(run: ChatRun, message: str, spec: str) -> None:
             await providers.check(p)  # maybe it was started since the last check
         use_tools = providers.tools_for(p, model)
         run.emit("model", {"connection": p.name, "model": model})
+        await web.attach_links(run.sid, message, emit)  # links in the message: read and attach the pages
         while True:
             started = False
             try:
-                async for event, data in run_agent(message, history, p, model, use_tools):
+                async for event, data in run_agent(message, history, p, model, use_tools, run.sid):
                     started = True
-                    if event == "tool":
-                        trail.append({**data, "ok": None, "preview": ""})
-                    elif event == "tool_result":
-                        for t in trail:
-                            if t["id"] == data["id"]:
-                                t.update(ok=data["ok"], preview=data["preview"][:300])
-                    elif event == "done":
+                    if event == "done":
                         answer = data["text"]
-                    run.emit(event, data)
+                    emit(event, data)
                 break
             except openai.APIStatusError as exc:
                 if not (use_tools and not started and providers.rejects_tools(exc)):

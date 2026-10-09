@@ -20,6 +20,7 @@ import config
 config.check()
 
 import agent  # noqa: E402  (config.check() first: it creates data/)
+import attachments  # noqa: E402
 import elastic_tools  # noqa: E402
 import memory  # noqa: E402
 import providers  # noqa: E402
@@ -55,7 +56,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=bool(config.WEB_TLS_CERT),
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
-    MAX_CONTENT_LENGTH=1024 * 1024,
+    MAX_CONTENT_LENGTH=(config.MAX_UPLOAD_MB + 1) * 1024 * 1024,  # attached files
 )
 
 SECURITY_HEADERS = {
@@ -153,6 +154,7 @@ def chat_page(current: dict | None):
     return page("chat.html", nav="chat", current=current, connections=connections, selected=selected,
                 selected_unlisted=selected if selected and selected not in specs else "",
                 messages=sessions.messages(current["id"]) if current else [],
+                attached=[attachments.public(a) for a in sessions.attachments(current["id"])] if current else [],
                 running=bool(current) and agent.active_run(current["id"]) is not None,
                 tool_count=len(tools.schemas()))
 
@@ -201,6 +203,8 @@ def api_chat():
         return jsonify(error=str(exc)), 400
     if conn.models and model not in conn.models:
         return jsonify(error=f"{conn.name} has no model {model!r}. Pick one from the list."), 400
+    if sid:
+        sessions.title_from_first_message(sid, message)  # a chat started by attaching a file
     sid = sid or sessions.create(message)
     run = agent.start_chat(sid, message, spec)
     if run is None:
@@ -231,7 +235,45 @@ def api_session_delete(sid: str):
     if agent.active_run(sid):
         return jsonify(error="Stop this chat before deleting it."), 409
     sessions.delete(sid)
+    attachments.delete_chat(sid)
     return jsonify(ok=True)
+
+
+# ---------- attached files ----------
+
+@app.post("/api/files")
+def api_files_upload():
+    """Attach dropped or picked files to a chat (a new chat if there's none yet)."""
+    uploads = request.files.getlist("files")
+    if not uploads:
+        return jsonify(error="No file received."), 400
+    sid = request.form.get("session_id") or ""
+    if sid and sessions.get(sid) is None:
+        return jsonify(error="That chat was deleted."), 404
+    new_chat = not sid
+    sid = sid or sessions.create(uploads[0].filename or "Attached file")
+    added, errors = [], []
+    for f in uploads:
+        try:
+            added.append(attachments.public(attachments.add_file(sid, f.filename or "file", f.read())))
+        except attachments.Unreadable as exc:
+            errors.append({"name": f.filename, "error": str(exc)})
+    if new_chat and not added:  # nothing could be read: don't leave an empty chat behind
+        sessions.delete(sid)
+        attachments.delete_chat(sid)
+        return jsonify(session=None, files=[], errors=errors)
+    chat_row = sessions.get(sid)
+    return jsonify(session={"id": sid, "title": chat_row["title"]}, files=added, errors=errors)
+
+
+@app.post("/api/files/<sid>/<aid>/delete")
+def api_files_delete(sid: str, aid: str):
+    return jsonify(removed=attachments.remove(sid, aid))
+
+
+@app.errorhandler(413)
+def too_large(_):
+    return jsonify(error=f"Too big: files can be up to {config.MAX_UPLOAD_MB} MB."), 413
 
 
 # ---------- memory ----------

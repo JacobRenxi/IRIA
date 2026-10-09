@@ -151,6 +151,7 @@ async function follow(res, turn) {
     if (event === "session") return onSession(data);
     if (event === "model") { model = data.connection + "/" + data.model; return; }
     if (event === "notice") { trail.append(el("li", "interim", esc(data.text))); return; }
+    if (event === "attachment") { addChip(data); return; }
     if (event === "delta") {
       text += data.text;
       if (!answer) { answer = el("div", "answer streaming"); working.before(answer); }
@@ -241,6 +242,91 @@ async function send(message) {
   setBusy(false);
   input.focus();
 }
+
+// ---------- files and pages attached to this chat ----------
+const chips = document.getElementById("chips");
+const fileInput = document.getElementById("file-input");
+const chatBox = document.querySelector(".chat");
+const dropOverlay = document.getElementById("drop-overlay");
+
+function sizeLabel(chars) {
+  if (chars >= 1e6) return (chars / 1e6).toFixed(1) + "M chars";
+  if (chars >= 1e3) return Math.round(chars / 1e3) + "k chars";
+  return chars + " chars";
+}
+
+function addChip(a) {
+  const li = el("li", "chip" + (a.source ? " chip-web" : ""));
+  li.dataset.id = a.id;
+  const name = a.source
+    ? '<a href="' + esc(a.source) + '" target="_blank" rel="noopener noreferrer">' + esc(a.name) + "</a>"
+    : esc(a.name);
+  li.title = (a.source || a.name) + "\nThe AI sees this with every message in this chat.";
+  li.innerHTML = '<span class="chip-icon" aria-hidden="true">' + (a.source ? "🌐" : "📄") + "</span>" +
+    '<span class="chip-name">' + name + '</span><span class="chip-size">' + sizeLabel(a.chars) + "</span>" +
+    '<button type="button" class="chip-x" aria-label="Remove ' + esc(a.name) + ' from this chat">&times;</button>';
+  chips.append(li);
+}
+
+function addNote(cls, text) {
+  const li = el("li", "chip " + cls, '<span class="chip-name">' + esc(text) + "</span>" +
+    '<button type="button" class="chip-x" aria-label="Dismiss">&times;</button>');
+  chips.append(li);
+  return li;
+}
+
+chips.addEventListener("click", async e => {
+  const x = e.target.closest(".chip-x");
+  if (!x) return;
+  const li = x.closest(".chip");
+  if (li.dataset.id && sessionId) {
+    try { await api("/api/files/" + encodeURIComponent(sessionId) + "/" + encodeURIComponent(li.dataset.id) + "/delete", {}); }
+    catch (err) { alert(err.message); return; }
+  }
+  li.remove();
+});
+
+async function upload(files) {
+  if (!files.length) return;
+  const pending = addNote("chip-pending", "Reading " + (files.length === 1 ? files[0].name : files.length + " files") + "…");
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  if (sessionId) form.append("session_id", sessionId);
+  try {
+    const res = await fetch("/api/files", { method: "POST", headers: { "X-CSRF-Token": CSRF }, body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Upload failed (HTTP " + res.status + ").");
+    if (data.session) onSession(data.session);
+    data.files.forEach(addChip);
+    data.errors.forEach(e => addNote("chip-error", e.name + ": " + e.error));
+  } catch (err) {
+    addNote("chip-error", err.message);
+  } finally {
+    pending.remove();
+    input.focus();
+  }
+}
+
+document.getElementById("attach").addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => { upload([...fileInput.files]); fileInput.value = ""; });
+
+// Drop files anywhere on the chat. Elsewhere on the page, a dropped file must not replace the page.
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes("Files");
+chatBox.addEventListener("dragenter", e => { if (hasFiles(e)) { dragDepth++; dropOverlay.hidden = false; } });
+chatBox.addEventListener("dragleave", e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; dropOverlay.hidden = true; } });
+chatBox.addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+chatBox.addEventListener("drop", e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  dropOverlay.hidden = true;
+  upload([...e.dataTransfer.files]);
+});
+window.addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener("drop", e => { if (hasFiles(e)) e.preventDefault(); });
+
+(initial.attached || []).forEach(addChip);
 
 // ---------- wiring ----------
 form.addEventListener("submit", e => {
