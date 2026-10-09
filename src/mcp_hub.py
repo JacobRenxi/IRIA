@@ -3,14 +3,11 @@ Tokens live in .env; hub.yaml references them as ${VAR}. Reload from the Tools p
 import asyncio
 import json
 import logging
-import os
 import re
 import ssl
 from contextlib import AsyncExitStack
 
 import httpx2
-import yaml
-from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
@@ -18,16 +15,11 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, PaginatedRequestParams
 
 from config import HUB_CONFIG as CONFIG_PATH
-from config import MAX_RESULT_CHARS, ROOT
+from config import MAX_RESULT_CHARS, expand_env, read_hub_yaml
 from config import MCP_CONNECT_TIMEOUT as CONNECT_TIMEOUT
 from config import MCP_TOOL_TIMEOUT as TOOL_TIMEOUT
 
 log = logging.getLogger("mcp-hub")
-_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
-class MissingToken(Exception):
-    pass
 
 
 def _reason(exc: BaseException) -> str:
@@ -37,21 +29,6 @@ def _reason(exc: BaseException) -> str:
     while exc.__cause__ is not None and not str(exc):
         exc = exc.__cause__
     return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
-
-
-def _expand(value):
-    """Replace ${VAR} with the value from .env / the environment."""
-    if isinstance(value, str):
-        def sub(m):
-            if m.group(1) not in os.environ:
-                raise MissingToken(f"${{{m.group(1)}}} is not set in .env")
-            return os.environ[m.group(1)]
-        return _VAR.sub(sub, value)
-    if isinstance(value, dict):
-        return {k: _expand(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_expand(v) for v in value]
-    return value
 
 
 def _http_client_factory(ca_bundle: str | None):
@@ -111,18 +88,17 @@ class MCPHub:
             await asyncio.gather(*self._tasks, return_exceptions=True)
 
     async def reload(self) -> None:
-        """Re-read hub.yaml and .env-referenced tokens, and reconnect every server."""
+        """Re-read hub.yaml and reconnect every server (call config.reload_env() first for new tokens)."""
         async with self._lock:
             await self.stop()
             self._reset()
-            load_dotenv(ROOT / ".env", override=True)  # pick up tokens added since startup
         await self.ensure_started()
 
     async def _run_server(self, name: str, cfg: dict, ready: asyncio.Event) -> None:
         try:
             async with AsyncExitStack() as stack:
                 async with asyncio.timeout(CONNECT_TIMEOUT):
-                    session = await self._connect(stack, _expand(cfg or {}))
+                    session = await self._connect(stack, expand_env(cfg or {}))
                     count = await self._register(name, session)
                 log.info("MCP %s: connected, %d tools", name, count)
                 self.status[name].update(state="connected", tools=count)
@@ -155,15 +131,13 @@ class MCPHub:
         if not CONFIG_PATH.exists():
             log.warning("%s not found, no MCP servers loaded", CONFIG_PATH)
             return {}
-        try:
-            with open(CONFIG_PATH) as f:
-                servers = (yaml.safe_load(f) or {}).get("mcp_servers") or {}
-            if not isinstance(servers, dict):
-                raise ValueError("mcp_servers must be a mapping of server names")
-        except (yaml.YAMLError, ValueError, AttributeError) as exc:
-            self.config_error = f"{CONFIG_PATH.name}: {exc}"
+        data, self.config_error = read_hub_yaml()
+        servers = data.get("mcp_servers") or {}
+        if not isinstance(servers, dict):
+            self.config_error = f"{CONFIG_PATH.name}: mcp_servers must be a mapping of server names"
+            servers = {}
+        if self.config_error:
             log.error("Can't read %s", self.config_error)
-            return {}
         return servers
 
     async def _connect(self, stack: AsyncExitStack, cfg: dict) -> ClientSession:

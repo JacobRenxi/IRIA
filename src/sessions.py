@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     created REAL NOT NULL,
-    updated REAL NOT NULL
+    updated REAL NOT NULL,
+    model TEXT                   -- "<connection>/<model>" this chat last used
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY,
@@ -24,7 +25,8 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,          -- user | assistant | error
     content TEXT NOT NULL,
     tools TEXT,                  -- JSON list of tool calls made for this answer (shown in the chat)
-    created REAL NOT NULL
+    created REAL NOT NULL,
+    model TEXT                   -- "<connection>/<model>" that wrote this answer
 );
 CREATE INDEX IF NOT EXISTS messages_by_session ON messages(session_id, id);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, content='messages', content_rowid='id');
@@ -54,6 +56,9 @@ def init() -> None:
     with _db() as con:
         con.execute("PRAGMA journal_mode = WAL")
         con.executescript(SCHEMA)
+        for table in ("sessions", "messages"):  # databases made before chats remembered their model
+            if "model" not in {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN model TEXT")
 
 
 def _fts_query(text: str, match_all: bool) -> str | None:
@@ -70,7 +75,8 @@ def create(title: str) -> str:
     title = " ".join(title.split())
     title = title[:60] + ("…" if len(title) > 60 else "")
     with _db() as con:
-        con.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)", (sid, title or "New chat", now, now))
+        con.execute("INSERT INTO sessions (id, title, created, updated) VALUES (?, ?, ?, ?)",
+                    (sid, title or "New chat", now, now))
     return sid
 
 
@@ -101,7 +107,7 @@ def list_sessions(query: str = "", limit: int = 100) -> list[dict]:
 def messages(sid: str) -> list[dict]:
     with _db() as con:
         rows = con.execute(
-            "SELECT role, content, tools, created FROM messages WHERE session_id = ? ORDER BY id", (sid,)
+            "SELECT role, content, tools, created, model FROM messages WHERE session_id = ? ORDER BY id", (sid,)
         ).fetchall()
     return [{**dict(r), "tools": json.loads(r["tools"]) if r["tools"] else []} for r in rows]
 
@@ -117,14 +123,19 @@ def history(sid: str, limit: int) -> list[dict]:
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
-def add_message(sid: str, role: str, content: str, tools: list | None = None) -> None:
+def add_message(sid: str, role: str, content: str, tools: list | None = None, model: str | None = None) -> None:
     now = time.time()
     with _db() as con:
         con.execute(
-            "INSERT INTO messages (session_id, role, content, tools, created) VALUES (?, ?, ?, ?, ?)",
-            (sid, role, content, json.dumps(tools) if tools else None, now),
+            "INSERT INTO messages (session_id, role, content, tools, created, model) VALUES (?, ?, ?, ?, ?, ?)",
+            (sid, role, content, json.dumps(tools) if tools else None, now, model),
         )
         con.execute("UPDATE sessions SET updated = ? WHERE id = ?", (now, sid))
+
+
+def set_model(sid: str, spec: str) -> None:
+    with _db() as con:
+        con.execute("UPDATE sessions SET model = ? WHERE id = ?", (spec, sid))
 
 
 def delete(sid: str) -> None:

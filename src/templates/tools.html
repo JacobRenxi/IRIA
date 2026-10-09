@@ -9,25 +9,79 @@
     </div>
     <form method="post" action="{{ url_for('tools_reload') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn" type="submit" title="Re-read hub.yaml and .env, and reconnect every MCP server">Reload MCP servers</button>
+      <button class="btn" type="submit" title="Re-read hub.yaml and .env: AI connections and MCP servers">Reload hub.yaml</button>
     </form>
   </header>
 
   <section class="card">
     <div class="card-head">
-      <strong>Model</strong>
-      <span class="state {{ 'good' if model.ok and model.tools else ('warn' if model.ok else 'bad') }}">
-        {{ 'ready, can use tools' if model.ok and model.tools else ('chat only' if model.ok else 'not ready') }}
-      </span>
+      <strong>AI connections</strong>
+      <span class="muted small">new chats start with <code>{{ default_spec or 'nothing yet' }}</code>; switch any time in the chat's model list</span>
     </div>
-    <dl class="facts">
-      <dt>LLM_MODEL</dt><dd><code>{{ model.model }}</code></dd>
-      <dt>LLM_BASE_URL</dt><dd><code>{{ model.base_url }}</code></dd>
-    </dl>
     {% if model.error %}<p class="note">{{ model.error | ticks }}</p>{% endif %}
-    {% if model.installed %}
-    <p class="muted small">Installed models: {% for m in model.installed %}<code>{{ m }}</code>{{ ", " if not loop.last }}{% endfor %}</p>
-    {% endif %}
+    <ul class="toolsets">
+      {% for c in connections %}
+      <li class="toolset">
+        <div class="toolset-head">
+          <span class="conn-dot {{ 'good' if c.ok else 'bad' }}"><span class="dot"></span></span>
+          <div class="toolset-name">
+            <strong>{{ c.name }}</strong><span class="badge">{{ c.kind }}</span>
+            <span class="state {{ 'good' if c.ok else 'bad' }}">{{ 'connected' if c.ok else 'not ready' }}</span>
+            <div class="muted small"><code>{{ c.url or '(no url)' }}</code></div>
+            {% if c.error %}<div class="small {{ 'muted' if c.ok else 'bad-text' }}">{{ c.error | ticks }}</div>{% endif %}
+          </div>
+          {% if c.ok %}<span class="muted small count">{{ c.models | length }} model{{ 's' if c.models | length != 1 }}</span>{% endif %}
+        </div>
+        {% if c.models %}
+        <details {{ 'open' if c.models | length <= 12 }}>
+          <summary>Models</summary>
+          <ul class="tool-list model-list">
+            {% for m in c.models %}
+            <li>
+              <span class="model-name">
+                <code>{{ m.name }}</code>
+                {% if m.spec == default_spec %}<span class="badge">default</span>{% endif %}
+                {% if m.tools == false %}<span class="state warn">chat only</span>
+                {% elif m.tools %}<span class="state good">tools</span>
+                {% else %}<span class="state" title="The server doesn't say; the hub tries tools and falls back if they're refused">tools?</span>{% endif %}
+                {% if m.added %}<span class="state" title="Added by hand on this page">added</span>{% endif %}
+                {% if not m.available %}<span class="state bad">not listed by the server</span>{% endif %}
+              </span>
+              <span class="model-actions">
+                {% if m.spec != default_spec %}
+                <form method="post" action="{{ url_for('models_default') }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="spec" value="{{ m.spec }}">
+                  <button class="link-btn" type="submit">Make default</button>
+                </form>
+                {% endif %}
+                {% if m.added %}
+                <form method="post" action="{{ url_for('models_remove') }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="connection" value="{{ c.name }}">
+                  <input type="hidden" name="model" value="{{ m.name }}">
+                  <button class="link-btn" type="submit">Remove</button>
+                </form>
+                {% endif %}
+              </span>
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+        {% if c.ok and c.kind != 'Ollama' %}
+        <form class="add-model" method="post" action="{{ url_for('models_add') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="connection" value="{{ c.name }}">
+          <label class="sr-only" for="add-{{ c.name }}">Model name for {{ c.name }}</label>
+          <input id="add-{{ c.name }}" name="model" placeholder="Add a model your key can use, e.g. gpt-4o" autocomplete="off" required>
+          <button class="btn" type="submit">Add model</button>
+        </form>
+        {% endif %}
+      {% else %}
+      <li class="muted">No AI connections yet. Add one under <code>providers:</code> in <code>{{ hub_config }}</code>.</li>
+      {% endfor %}
+    </ul>
   </section>
 
   <section class="card">
@@ -35,9 +89,7 @@
       <strong>Toolsets</strong>
       <span class="muted small"><span id="tools-on">{{ tools_on }}</span> of {{ tools_total }} tools switched on</span>
     </div>
-    {% if model.ok and not model.tools %}
-    <p class="note">The current model can't call tools, so none are used until you change <code>LLM_MODEL</code>. Your switches are kept.</p>
-    {% endif %}
+    <p class="muted small">These apply to every model. Models marked <em>chat only</em> never get tools.</p>
     {% if config_error %}<p class="note bad-text">{{ config_error }}</p>{% endif %}
 
     <ul class="toolsets">
@@ -84,11 +136,12 @@
   </section>
 
   <section class="card">
-    <div class="card-head"><strong>Add a system</strong></div>
+    <div class="card-head"><strong>Add an AI connection or a system</strong></div>
     <p class="muted small">
-      MCP servers come from <code>{{ hub_config }}</code>. Put the server's token in <code>.env</code>, add the
-      server to <code>hub.yaml</code> referencing the token as <code>${NAME}</code>, then click <em>Reload MCP servers</em>.
-      New servers start switched on.
+      Both live in <code>{{ hub_config }}</code>: AI connections under <code>providers:</code> (Ollama, LiteLLM,
+      vLLM, OpenAI, OpenRouter, any OpenAI-compatible API), MCP servers under <code>mcp_servers:</code>.
+      Put tokens in <code>.env</code>, reference them as <code>${NAME}</code>, then click <em>Reload hub.yaml</em>.
+      New MCP servers start switched on.
     </p>
     {% if not elastic.enabled %}
     <p class="muted small">Elasticsearch is not configured: set <code>ELASTIC_URL</code> and <code>ELASTIC_API_KEY</code> in <code>.env</code> and restart to add the read-only Elastic tools.</p>

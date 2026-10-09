@@ -1,7 +1,50 @@
-# Every MCP server listed here is connected at startup and ALL its tools are given to the AI.
-# Secrets go in .env; reference them here as ${VAR}. After editing, click "Reload MCP servers"
-# on the Tools page (or restart the hub).
-# A server that fails to connect is logged and skipped; the rest still load.
+# Hub settings: where the AI comes from, and which systems it can reach.
+# Secrets go in .env; reference them here as ${VAR}. After editing, click "Reload hub.yaml"
+# on the Tools & status page (or restart the hub).
+
+# ---------- AI connections ----------
+# Any OpenAI-compatible API: Ollama, LiteLLM, vLLM, LM Studio, llama.cpp, OpenAI, OpenRouter, Groq...
+# For providers that aren't OpenAI-compatible (Anthropic, Bedrock, Vertex, Azure...), connect them
+# to LiteLLM and add LiteLLM here. Every model of every connection shows up in the chat's model list.
+#
+# Per connection:
+#   url:        the API address, usually ending in /v1                       (required)
+#   api_key:    ${SOME_KEY} from .env                                       (if the server needs one)
+#   models:     [a, b]  only offer these; default is every model the server lists
+#   ca_bundle:  /path/to/ca.pem  for a server with an internal certificate
+#   headers:    extra HTTP headers, e.g. for a proxy in front of the server
+#   timeout:    seconds to wait for an answer (default 300)
+providers:
+
+  # ollama:                       # Ollama on this machine
+  #   url: http://localhost:11434/v1
+
+  litellm:                    
+    url: 
+    api_key: ${LITELLM_API_KEY}
+  #   ca_bundle: /path/to/internal-ca.pem
+
+  # vllm:                       # vLLM: start it with --enable-auto-tool-choice --tool-call-parser <parser>
+  #   url: http://gpu-box:8000/v1
+
+  # openrouter:                 # hosted models; list the ones you want, it has hundreds
+  #   url: https://openrouter.ai/api/v1
+  #   api_key: ${OPENROUTER_API_KEY}
+  #   models: [openai/gpt-4o-mini, anthropic/claude-sonnet-4.5]
+
+  # openai:
+  #   url: https://api.openai.com/v1
+  #   api_key: ${OPENAI_API_KEY}
+  #   models: [gpt-4o-mini]
+
+# The model new chats start with, as <connection>/<model>. Each chat can switch in its model list.
+# Leave it out to start with the first model found.
+# default_model: ollama/qwen3:8b
+
+# ---------- MCP servers ----------
+# Every MCP server listed here is connected at startup and its tools are given to the AI
+# (switch toolsets or single tools off on the Tools & status page).
+# A server that fails to connect is shown there with the reason; the rest still load.
 #
 # Three ways to add a server (uncomment and edit):
 mcp_servers:

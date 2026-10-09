@@ -3,6 +3,7 @@ const log = document.getElementById("log");
 const form = document.getElementById("composer");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
+const modelSelect = document.getElementById("model-select");
 const initial = JSON.parse(document.getElementById("chat-data").textContent);
 let sessionId = initial.session;
 let busy = false;
@@ -112,6 +113,12 @@ function finishTool(trail, data) {
   li.querySelector("details").append(el("pre", null, esc(data.preview || "(empty result)")));
 }
 
+// "ollama/qwen3:8b" -> "qwen3:8b · ollama", shown under each answer
+function modelLine(spec) {
+  const cut = spec.indexOf("/");
+  return el("div", "answer-meta", esc(cut < 0 ? spec : spec.slice(cut + 1) + " · " + spec.slice(0, cut)));
+}
+
 function showSaved(messages) {
   let turn = null;
   for (const m of messages) {
@@ -120,6 +127,7 @@ function showSaved(messages) {
     const trail = turn.querySelector(".trail");
     for (const t of m.tools || []) trail.append(toolItem(t));
     turn.append(m.role === "error" ? el("p", "error-msg", esc(m.content)) : el("div", "answer", renderMarkdown(m.content)));
+    if (m.model && m.role === "assistant") turn.append(modelLine(m.model));
   }
   scrollDown(true);
 }
@@ -130,7 +138,7 @@ async function follow(res, turn) {
   const trail = turn.querySelector(".trail");
   const working = el("div", "working", "<span></span><span></span><span></span>");
   turn.append(working);
-  let answer = null, text = "", pending = false, finished = false;
+  let answer = null, text = "", pending = false, finished = false, model = null;
 
   const paint = () => {
     pending = false;
@@ -141,6 +149,8 @@ async function follow(res, turn) {
   };
   const handle = (event, data) => {
     if (event === "session") return onSession(data);
+    if (event === "model") { model = data.connection + "/" + data.model; return; }
+    if (event === "notice") { trail.append(el("li", "interim", esc(data.text))); return; }
     if (event === "delta") {
       text += data.text;
       if (!answer) { answer = el("div", "answer streaming"); working.before(answer); }
@@ -156,6 +166,7 @@ async function follow(res, turn) {
       finished = true;
       if (!answer) { answer = el("div", "answer"); working.before(answer); }
       text = data.text; paint(); answer.classList.remove("streaming");
+      if (model) working.before(modelLine(model));
     } else if (event === "error") {
       finished = true;
       answer?.classList.remove("streaming");
@@ -217,7 +228,7 @@ async function send(message) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF },
-      body: JSON.stringify({ session_id: sessionId, message }),
+      body: JSON.stringify({ session_id: sessionId, message, model: modelSelect?.value }),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -260,6 +271,48 @@ document.querySelectorAll(".suggestion").forEach(b =>
   b.addEventListener("click", () => { if (!busy) send(b.textContent.trim()); }));
 
 showSaved(initial.messages);
+
+// New chats start with the model you picked last time (if it's still there).
+const MODEL_KEY = "hub.model";
+if (modelSelect && !sessionId) {
+  try {
+    const last = localStorage.getItem(MODEL_KEY);
+    if (last && [...modelSelect.options].some(o => o.value === last && !o.disabled && !o.dataset.add)) modelSelect.value = last;
+  } catch { /* storage blocked: keep the default */ }
+}
+
+// Show which connection the picked model is on (two connections can offer the same model name).
+const modelConn = document.getElementById("model-conn");
+const showConnection = () => {
+  const v = modelSelect?.value || "";
+  if (modelConn) modelConn.textContent = v.includes("/") ? "on " + v.slice(0, v.indexOf("/")) : "";
+};
+showConnection();
+
+let lastModel = modelSelect?.value;
+modelSelect?.addEventListener("change", async () => {
+  const chosen = modelSelect.selectedOptions[0];
+  if (chosen?.dataset.add) {
+    // "Other model on <connection>…": a model the server doesn't list but your key can use.
+    const connection = chosen.dataset.add;
+    const name = (prompt("Model name on " + connection + ", exactly as the server knows it (e.g. gpt-4o):") || "").trim();
+    modelSelect.value = lastModel;
+    if (!name) return;
+    try {
+      const { spec } = await api("/api/models/add", { connection, model: name });
+      if (![...modelSelect.options].some(o => o.value === spec)) {
+        const opt = document.createElement("option");
+        opt.value = spec;
+        opt.textContent = name;
+        chosen.before(opt);
+      }
+      modelSelect.value = spec;
+    } catch (err) { alert(err.message); return; }
+  }
+  lastModel = modelSelect.value;
+  showConnection();
+  try { localStorage.setItem(MODEL_KEY, lastModel); } catch { /* not remembered, still used */ }
+});
 
 // The page was reloaded while an answer was still being written: pick it up where it is.
 if (initial.running && sessionId) {

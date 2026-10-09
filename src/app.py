@@ -22,6 +22,7 @@ config.check()
 import agent  # noqa: E402  (config.check() first: it creates data/)
 import elastic_tools  # noqa: E402
 import memory  # noqa: E402
+import providers  # noqa: E402
 import runtime  # noqa: E402
 import sessions  # noqa: E402
 import skills  # noqa: E402
@@ -30,6 +31,7 @@ from mcp_hub import hub  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per model/MCP request is too noisy
+logging.getLogger("openai").setLevel(logging.WARNING)  # "retrying request" lines
 logging.getLogger("elastic_transport").setLevel(logging.ERROR)  # a traceback per retry; errors show on the Tools page
 log = logging.getLogger("web")
 
@@ -110,7 +112,7 @@ def ticks(text: str) -> Markup:
 
 @app.context_processor
 def page_globals():
-    return {"hub_name": config.HUB_NAME, "csrf_token": csrf_token, "model": agent.model_status}
+    return {"hub_name": config.HUB_NAME, "csrf_token": csrf_token, "model": providers.summary()}
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -143,9 +145,21 @@ def page(template: str, **kw) -> str:
 
 # ---------- chat ----------
 
+def chat_page(current: dict | None):
+    """The chat, with the model picker set to this chat's model (or the default for a new chat)."""
+    connections = providers.picker()
+    specs = {m["spec"] for c in connections for m in c["models"]}
+    selected = current["model"] if current and current.get("model") in specs else providers.default()
+    return page("chat.html", nav="chat", current=current, connections=connections, selected=selected,
+                selected_unlisted=selected if selected and selected not in specs else "",
+                messages=sessions.messages(current["id"]) if current else [],
+                running=bool(current) and agent.active_run(current["id"]) is not None,
+                tool_count=len(tools.schemas()))
+
+
 @app.get("/")
 def index():
-    return page("chat.html", nav="chat", current=None, messages=[], running=False, tool_count=len(tools.schemas()))
+    return chat_page(None)
 
 
 @app.get("/c/<sid>")
@@ -153,8 +167,7 @@ def chat(sid: str):
     current = sessions.get(sid)
     if current is None:
         abort(404)
-    return page("chat.html", nav="chat", current=current, messages=sessions.messages(sid),
-                running=agent.active_run(sid) is not None, tool_count=len(tools.schemas()))
+    return chat_page(current)
 
 
 def _sse(event: str, data: dict) -> str:
@@ -181,8 +194,15 @@ def api_chat():
     sid = body.get("session_id")
     if sid and sessions.get(sid) is None:
         return jsonify(error="That chat was deleted."), 404
+    spec = str(body.get("model") or providers.default())
+    try:
+        conn, model = providers.resolve(spec)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    if conn.models and model not in conn.models:
+        return jsonify(error=f"{conn.name} has no model {model!r}. Pick one from the list."), 400
     sid = sid or sessions.create(message)
-    run = agent.start_chat(sid, message)
+    run = agent.start_chat(sid, message, spec)
     if run is None:
         return jsonify(error="This chat is still answering. Wait for it, or press Stop."), 409
     return _follow(run, sessions.get(sid))
@@ -288,10 +308,11 @@ def skill_delete(name: str):
 
 @app.get("/tools")
 def tools_page():
-    runtime.run(agent.check_model(), timeout=30)
+    runtime.run(providers.check_all(), timeout=60)
     return page(
         "tools.html", nav="tools", toolsets=tools.catalog(), tools_on=len(tools.schemas()),
-        tools_total=len(tools.all_schemas()), config_error=hub.config_error, hub_config=config.HUB_CONFIG,
+        tools_total=len(tools.all_schemas()), config_error=providers.config_error or hub.config_error,
+        hub_config=config.HUB_CONFIG, connections=providers.picker(), default_spec=providers.default(),
         elastic=runtime.run(elastic_tools.status(), timeout=70),
     )
 
@@ -313,11 +334,52 @@ def api_tools_switch():
     return jsonify(tools_on=len(tools.schemas()), tools_total=len(tools.all_schemas()))
 
 
+@app.post("/models/add")
+def models_add():
+    try:
+        spec = providers.add_model(request.form.get("connection", ""), request.form.get("model", ""))
+        flash(f"Added {spec}. It's in the chat's model list now.")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("tools_page"))
+
+
+@app.post("/models/remove")
+def models_remove():
+    providers.remove_model(request.form.get("connection", ""), request.form.get("model", ""))
+    flash("Model removed from the list.")
+    return redirect(url_for("tools_page"))
+
+
+@app.post("/models/default")
+def models_default():
+    try:
+        providers.set_default(request.form.get("spec", ""))
+        flash(f"New chats now start with {request.form['spec']}.")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("tools_page"))
+
+
+@app.post("/api/models/add")
+def api_models_add():
+    """"Other model…" in the chat's model list."""
+    body = request.get_json(silent=True) or {}
+    try:
+        spec = providers.add_model(str(body.get("connection", "")), str(body.get("model", "")))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    return jsonify(spec=spec)
+
+
 @app.post("/tools/reload")
 def tools_reload():
-    runtime.run(hub.reload(), timeout=config.MCP_CONNECT_TIMEOUT + 30)
+    config.reload_env()  # new tokens in .env count too
+    runtime.run(agent.reload(), timeout=config.MCP_CONNECT_TIMEOUT + 60)
+    models = sum(len(c["models"]) for c in providers.picker())
     ok = sum(1 for s in hub.status.values() if s["state"] == "connected")
-    flash(f"Reloaded hub.yaml: {ok} of {len(hub.status)} MCP servers connected, {len(hub.schemas)} tools.")
+    flash(f"Reloaded hub.yaml: {len(providers.providers)} AI connections with {models} models; "
+          f"{ok} of {len(hub.status)} MCP servers connected.")
     return redirect(url_for("tools_page"))
 
 
@@ -335,12 +397,15 @@ def _stop_on_term(signum, frame):
 def main() -> None:
     runtime.start()
     runtime.run(agent.startup())
-    st = agent.model_status
-    if st.get("error"):
-        log.warning("Model: %s", st["error"])
+    for c in providers.picker():
+        state = f"{len(c['models'])} models" if c["ok"] else f"NOT ready: {c['error']}"
+        log.info("AI connection %s (%s, %s): %s", c["name"], c["kind"], c["url"], state)
+    st = providers.summary()
+    if st["error"]:
+        log.warning("Default model: %s", st["error"])
     else:
-        log.info("Model: %s (%s)", config.LLM_MODEL, "tools on" if st.get("tools") else "chat only")
-    log.info("Tools: %d (%d from MCP servers)", len(tools.schemas()), len(hub.schemas))
+        log.info("Default model: %s", st["spec"])
+    log.info("Tools: %d switched on (%d from MCP servers)", len(tools.schemas()), len(hub.schemas))
 
     ssl_ctx = (config.WEB_TLS_CERT, config.WEB_TLS_KEY) if config.WEB_TLS_CERT else None
     shown = "localhost" if config.WEB_HOST in ("127.0.0.1", "0.0.0.0") else config.WEB_HOST

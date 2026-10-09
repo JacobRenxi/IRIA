@@ -2,6 +2,28 @@
 {% block title %}{{ current.title ~ ' · ' if current }}{{ hub_name }}{% endblock %}
 {% block main %}
 <div class="chat">
+  <div class="chat-bar">
+    <label for="model-select">Model</label>
+    <select id="model-select" {{ 'disabled' if not connections }}>
+      {% if selected_unlisted %}<option value="{{ selected_unlisted }}" selected>{{ selected_unlisted }}</option>{% endif %}
+      {% for c in connections %}
+      <optgroup label="{{ c.name }}{{ '' if c.ok else ' (not ready)' }}">
+        {% for m in c.models %}
+        <option value="{{ m.spec }}" {{ 'selected' if m.spec == selected }}>{{ m.name }}{{ ' · chat only' if m.tools == false }}{{ ' · not listed' if not m.available }}</option>
+        {% endfor %}
+        {% if c.ok and c.kind != 'Ollama' %}
+        <option value="" data-add="{{ c.name }}">Other model on {{ c.name }}…</option>
+        {% elif not c.models %}
+        <option disabled>{{ 'no models found' if c.ok else 'not ready: see Tools & status' }}</option>
+        {% endif %}
+      </optgroup>
+      {% else %}
+      <option>No AI connection: add one in hub.yaml</option>
+      {% endfor %}
+    </select>
+    <span class="muted small" id="model-conn"></span>
+    <a class="muted small" href="{{ url_for('tools_page') }}">Manage models</a>
+  </div>
   <section class="log" id="log" aria-live="polite">
     {% if not current %}
     <div class="empty" id="empty">
@@ -20,9 +42,11 @@
   </section>
 
   <form class="composer" id="composer">
-    <label class="sr-only" for="input">Message</label>
-    <textarea id="input" rows="1" placeholder="Ask {{ hub_name }} anything…" title="Enter to send, Shift+Enter for a new line" autofocus></textarea>
-    <button type="submit" class="btn btn-primary" id="send">Send</button>
+    <div class="composer-row">
+      <label class="sr-only" for="input">Message</label>
+      <textarea id="input" rows="1" placeholder="Ask {{ hub_name }} anything…" title="Enter to send, Shift+Enter for a new line" autofocus></textarea>
+      <button type="submit" class="btn btn-primary" id="send">Send</button>
+    </div>
   </form>
 </div>
 <script type="application/json" id="chat-data">{{ {"session": current.id if current else None, "messages": messages, "running": running} | tojson }}</script>

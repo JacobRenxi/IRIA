@@ -177,11 +177,33 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; border-color: v
 .error-msg { margin-top: .8rem; color: var(--error); }
 
 .composer {
-  display: flex; gap: .6rem; align-items: flex-end;
-  padding: .8rem max(1rem, calc((100% - var(--col)) / 2)) 1rem; border-top: 1px solid var(--rule); background: var(--paper);
+  display: flex; flex-direction: column; gap: .45rem;
+  padding: .8rem max(1rem, calc((100% - var(--col)) / 2)) .7rem; border-top: 1px solid var(--rule); background: var(--paper);
 }
+.composer-row { display: flex; gap: .6rem; align-items: flex-end; }
 .composer textarea { flex: 1; resize: none; min-height: 2.75rem; max-height: 12rem; }
 .composer .btn { height: 2.75rem; min-width: 5rem; }
+.chat-bar {
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  padding: .6rem max(1rem, calc((100% - var(--col)) / 2)); border-bottom: 1px solid var(--rule);
+}
+.chat-bar label { font-weight: 600; font-size: .9rem; }
+.chat-bar select {
+  font: inherit; font-size: .9rem; font-weight: 500; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 7px; padding: .35rem .6rem; min-width: 0; max-width: 100%; cursor: pointer;
+}
+.chat-bar select:hover { border-color: var(--signal); }
+.model-list li { display: flex; justify-content: space-between; align-items: baseline; gap: .8rem; flex-wrap: wrap; }
+.model-actions { display: flex; gap: .8rem; font-size: .82rem; }
+.model-actions form { display: inline; }
+.add-model { display: flex; gap: .5rem; margin: .6rem 0 0 3rem; }
+.add-model input { flex: 1; min-width: 0; padding: .35rem .6rem; font-size: .88rem; }
+.add-model .btn { padding: .35rem .8rem; font-size: .88rem; }
+.answer-meta { margin-top: .45rem; font-size: .75rem; color: var(--muted); font-family: var(--mono); }
+.conn-dot { padding-top: .45rem; width: 2.3rem; display: flex; justify-content: center; flex: none; }
+.conn-dot.good .dot { background: var(--good); }
+.conn-dot.bad .dot { background: var(--error); }
+.tool-list .state { margin-left: .3rem; font-size: .72rem; }
 
 /* ---------- pages ---------- */
 .page { flex: 1; overflow-y: auto; padding: 1.5rem max(1rem, calc((100% - 52rem) / 2)) 3rem; }

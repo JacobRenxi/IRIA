@@ -38,7 +38,7 @@
     </nav>
     <div class="sidebar-foot">
       <a class="model-pill {{ 'bad' if model.error and not model.ok else ('warn' if model.error else 'good') }}"
-         href="{{ url_for('tools_page') }}" title="{{ model.error or 'Model is ready' }}">
+         href="{{ url_for('tools_page') }}" title="Default model for new chats ({{ model.provider }}){{ ': ' ~ model.error if model.error }}">
         <span class="dot"></span>{{ model.model or 'model' }}
         <span class="pill-note">{{ 'tools on' if model.ok and model.tools else ('chat only' if model.ok else 'not ready') }}</span>
       </a>
